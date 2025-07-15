@@ -1,0 +1,23 @@
+{
+    "team_alpha": {
+        "servers": [
+            "prod-alpha1.host.com",
+            "prod-alpha2.host.com"
+        ],
+        "host_key": "host_name"
+    },
+    "team_beta": {
+        "servers": [
+            "prod-beta1.host.com",
+            "prod-beta2.host.com"
+        ],
+        "host_key": "server_name"
+    },
+    "team_calypso": {
+        "servers": [
+            "prod-calypso1.host.com",
+            "prod-calypso2.host.com"
+        ],
+        "host_key": "calypso_name"
+    }
+}

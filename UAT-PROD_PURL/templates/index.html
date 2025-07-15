@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UAT to PROD PURL Tool</title>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; }
+    #finalPurl { color: green; margin-top: 10px; white-space: pre-line; }
+    table, th, td { border: 1px solid black; border-collapse: collapse; padding: 5px; }
+    #footer {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      font-size: 12px;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+
+<h2>Step 1 (Optional): Enter Assignment Group</h2>
+<input type="text" id="assignmentGroup" placeholder="Optional - Only if you want to load servers">
+<button onclick="loadServers()">Load Servers</button>
+<div id="serverDropdown"></div>
+
+<h2>Step 2: Enter UAT PURL(s) (Comma-separated)</h2>
+<textarea id="uatPurl" size="100" placeholder="Enter one or more PURLs"> </textarea>
+  <br>
+<button onclick="parsePurl()">Parse PURL(s)</button>
+<div id="paramTable"></div>
+
+<h2>Step 3: Modify Parameters</h2>
+<div id="modifySection">
+  <p>New Playbook Path (optional): 
+    <input type="text" id="newPlaybook" placeholder="Enter new playbook path (optional)">
+  </p>
+  <p>Parameters to Replace (comma-separated, e.g., env=uat,branchname=release): 
+    <input type="text" id="replaceParams" size="100" placeholder="param1=value1,param2=value2">
+  </p>
+  <button onclick="generatePurl()">Generate Prod PURL(s)</button>
+</div>
+
+<h3>Generated PROD PURL(s):</h3>
+<div id="finalPurl"></div>
+
+<div id="footer">
+  Designed by Shivangi Mathur | shivangimathurconnect@gmail.com
+</div>
+
+<script>
+let serversData = {};
+let currentHostKey = '';
+
+function loadServers() {
+  let group = $('#assignmentGroup').val().trim();
+  if (!group) {
+    $('#serverDropdown').html('<p style="color:orange;">No assignment group entered. Skipping server loading.</p>');
+    currentHostKey = '';
+    return;
+  }
+
+  $.getJSON('/get_servers', function(data) {
+    serversData = data;
+    if (!data[group]) {
+      $('#serverDropdown').html('<p style="color:red;">No servers found for this group.</p>');
+      currentHostKey = '';
+      return;
+    }
+    let options = data[group]['servers'].map(server => `<option value="${server}">${server}</option>`).join('');
+    $('#serverDropdown').html(`
+      <h3>Select Hostname:</h3>
+      <select id="hostnameSelect">${options}</select>
+      <p>Host Key for this group: <strong>${data[group]['host_key']}</strong></p>
+    `);
+    currentHostKey = data[group]['host_key'];
+  });
+}
+
+
+function parsePurl() {
+  let purlInput = $('#uatPurl').val().trim();
+  if (!purlInput) return alert('Enter at least one PURL');
+
+  let purls = purlInput.split(',').map(p => p.trim()).filter(p => p);
+  if (purls.length === 0) return alert('No valid PURLs found');
+
+  let html = '<h3>Parsed Parameters:</h3>';
+  purls.forEach((url, index) => {
+    if (!url.includes('?')) {
+      html += `<p>PURL ${index + 1}: Invalid URL format</p>`;
+      return;
+    }
+    let queryString = url.split('?')[1];
+    let params = new URLSearchParams(queryString);
+    html += `<h4>PURL ${index + 1}</h4><table><tr><th>Key</th><th>Value</th></tr>`;
+    params.forEach((value, key) => {
+      html += `<tr><td>${key}</td><td>${value}</td></tr>`;
+    });
+    html += '</table>';
+  });
+
+  $('#paramTable').html(html);
+}
+
+function generatePurl() {
+  let group = $('#assignmentGroup').val().trim();
+  if (!serversData[group]) return alert('Invalid assignment group or servers not loaded');
+
+  let selectedHost = $('#hostnameSelect').val();
+  if (!selectedHost) return alert('Select a host');
+
+  if (!currentHostKey) return alert('Host key not loaded. Please load servers.');
+
+  let purlInput = $('#uatPurl').val().trim();
+  let purls = purlInput.split(',').map(p => p.trim()).filter(p => p);
+  if (purls.length === 0) return alert('No valid PURLs found');
+
+  let newPlaybook = $('#newPlaybook').val().trim();
+  let replaceParams = $('#replaceParams').val().trim();
+
+  let replacements = {};
+  if (replaceParams) {
+    replaceParams.split(',').forEach(pair => {
+      let [key, value] = pair.split('=');
+      if (key && value !== undefined) {
+        replacements[key.trim()] = value.trim();
+      }
+    });
+  }
+
+  let finalOutput = '';
+  purls.forEach(url => {
+    if (!url.includes('?')) {
+      finalOutput += `<p style="color:red; font-weight:bold;">❗ Invalid URL format: ${url}</p>\n`;
+      return;
+    }
+    let [base, queryString] = url.split('?');
+    let params = new URLSearchParams(queryString);
+
+   if (!params.has(currentHostKey)) {
+  finalOutput += `
+    <div style="color:red; font-weight:bold; font-size:16px;">
+      ❗ Host Key "<strong>${currentHostKey}</strong>" missing.
+    </div>
+    <div style="color:red; font-size:14px; margin-bottom:10px;">
+      ${url}
+    </div>
+  `;
+  return;
+}
+    params.set(currentHostKey, selectedHost);
+
+    if (newPlaybook) params.set('playbook', newPlaybook);
+
+    for (let key in replacements) {
+      if (params.has(key)) {
+        params.set(key, replacements[key]);
+      }
+    }
+
+    let queryParts = [];
+    params.forEach((value, key) => {
+      if (key === 'playbook') {
+        queryParts.push(`${key}=${value}`);
+      } else {
+        queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+      }
+    });
+
+    finalOutput += `<div style="color:green; font-weight:bold; margin-bottom:10px;">${base}?${queryParts.join('&')}</div>\n`;
+  });
+
+  $('#finalPurl').html(finalOutput.trim());
+}
+
+
+$(document).ready(function() {
+  $('#uatPurl').keypress(function(e) {
+    if (e.which === 13) {
+      parsePurl();
+      return false;
+    }
+  });
+
+  $('#replaceParams').keypress(function(e) {
+    if (e.which === 13) {
+      generatePurl();
+      return false;
+    }
+  });
+});
+</script>
+
+</body>
+</html>
